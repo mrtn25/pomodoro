@@ -7,13 +7,8 @@ import Combine
 final class PomodoroModel: ObservableObject {
     static let shared = PomodoroModel()
 
-    struct Preset: Identifiable, Hashable {
-        let label: String
-        let minutes: Int
-        var id: Int { minutes }
-    }
-
-    static let presets = [Preset(label: "Fokus", minutes: 25), Preset(label: "Pause", minutes: 5)]
+    /// Slider range for the countdown length.
+    static let minuteRange: ClosedRange<Double> = 1...60
 
     @Published private(set) var duration: TimeInterval
     @Published private(set) var endsAt: Date?
@@ -67,8 +62,13 @@ final class PomodoroModel: ObservableObject {
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    func select(minutes: Int) {
-        duration = TimeInterval(minutes * 60)
+    var minutes: Int { Int(duration / 60) }
+
+    /// Sets a new length and resets to it. Ignored while running.
+    func setMinutes(_ minutes: Int) {
+        guard !isRunning else { return }
+        let clamped = min(max(Double(minutes), Self.minuteRange.lowerBound), Self.minuteRange.upperBound)
+        duration = clamped * 60
         reset()
     }
 

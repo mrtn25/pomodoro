@@ -22,9 +22,12 @@ In Xcode: `Package.swift` öffnen und auf ▶ klicken.
 ## Bedienung
 
 - **Menüleiste:** Timer-Symbol, solange er läuft die Restzeit (`24:57`).
-- **Klick:** Fokus 25 min / Pause 5 min, Start/Pause (auch mit der Leertaste) und Zurücksetzen.
+- **Klick:** Dauer per Slider (1–60 min), Start/Pause (auch mit der Leertaste) und
+  Zurücksetzen. Der Slider ist gesperrt, solange der Timer läuft.
 - **Schwebendes Fenster:** Schalter im Menü. Das Fenster bleibt über allen Apps,
-  lässt sich verschieben und merkt sich seine Position.
+  lässt sich verschieben und frei größer ziehen (die Uhr wächst mit). Mit ⌃ klappt
+  es auf eine Zeile mit Uhr und Play/Pause zusammen, mit ⌄ wieder auf. Position,
+  Größe und Zustand bleiben gespeichert.
 - **Ablauf:** Ton „Glass“. Der Timer läuft über Ruhezustand und Neustart der App hinweg weiter.
 - **Beim Login starten:** Systemeinstellungen → Allgemein → Anmeldeobjekte →
   `PomodoroTimer.app` hinzufügen.
