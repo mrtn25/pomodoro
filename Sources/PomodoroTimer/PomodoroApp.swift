@@ -17,10 +17,10 @@ struct PomodoroApp: App {
         MenuBarExtra {
             MainView(placement: .menu)
         } label: {
-            // Tomato always, the countdown next to it while a session is on.
+            // Tomato always, the countdown next to it during a session or break.
             HStack(spacing: 4) {
                 Image(nsImage: TomatoArt.menuBarIcon)
-                if model.hasSession {
+                if model.isActive {
                     Text(model.clock).monospacedDigit()
                 }
             }

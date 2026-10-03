@@ -1,7 +1,8 @@
 # Pomodoro 🍅 – Fokus-Timer für die macOS-Menüleiste
 
 Eine kleine, eigenständige Mac-App: eine Tomate in der Menüleiste, ein Klick öffnet
-den Timer. Für jede Fokus-Session sammelst du eine Tomate, je länger, desto seltener.
+den Timer. Für jede fertige Fokus-Session sammelst du eine Tomate und Punkte, je länger,
+desto wertvoller. Danach startet automatisch eine 5-Minuten-Pause.
 
 ## Voraussetzung
 
@@ -10,7 +11,6 @@ macOS 13 oder neuer und die Xcode Command Line Tools (`xcode-select --install`).
 ## Bauen und starten
 
 ```bash
-cd macos/PomodoroTimer
 ./build-app.sh --install
 ```
 
@@ -23,11 +23,18 @@ reicht `swift run`.
 - **Menüleiste:** eine Tomate, während einer Session zusätzlich die Restzeit.
 - **Unten drei Knöpfe:** ✓ Aufgaben · ▶︎/❚❚ Start/Pause · 🍅 Sammlung.
   Ein zweiter Klick auf Aufgaben oder Sammlung führt zurück zum Timer.
-- **Dauer:** Slider von 1 bis 60 min. Er ist nur zwischen zwei Sessions sichtbar.
-  In einer pausierten Session steht dort stattdessen „Session beenden“.
+- **Dauer:** Slider von 1 bis 60 min, darunter steht, welche Tomate diese Länge bringt.
+  Er ist nur zwischen zwei Sessions sichtbar. In einer pausierten Session steht dort
+  stattdessen „Session beenden“.
+- **Ablauf:** Fokus → Ende-Sound → automatisch 5 min Pause (grün) → Sound →
+  „Nächste Session starten“. Die Pause lässt sich überspringen.
 - **Aufgaben:** Plane, was du in der nächsten Session machst. Die erste offene Aufgabe
   steht unter dem Timer.
-- **Sounds:** „Pop“ beim Start, „Glass“ am Ende.
+- **Aufgaben-Check:** Nach einer fertigen Session fragt die App, welche der beim Start
+  offenen Aufgaben erledigt sind. Pro bestätigter Aufgabe gibt es +10 Pkt, höchstens 3
+  pro Session. Abhaken in der Liste selbst bringt nichts, und Aufgaben, die erst während
+  der Session dazukommen, zählen nicht. So lohnt es sich nicht, Kleinkram abzuhaken.
+- **Sounds:** „Pop“ beim Start, „Glass“ am Ende der Session, „Ping“ am Ende der Pause.
 - **Schwebendes Fenster:** die Nadel oben rechts im Menü. Das Fenster liegt über allen
   Apps, lässt sich frei größer ziehen und mit ⌃ auf eine Zeile einklappen.
   Schließen geht über das •••-Menü.
@@ -36,27 +43,25 @@ reicht `swift run`.
 
 ## Tomaten
 
-| Tomate | So bekommst du sie |
-|---|---|
-| Verwirrt | Session unter 5 min beenden |
-| Schläfrig | 5–9 min |
-| Zen | 10–14 min |
-| Fröhlich | 15–19 min |
-| Verliebt | 20–24 min |
-| Fokus | 25–29 min |
-| Cool | 30–39 min |
-| Ninja | 40–49 min |
-| Aufsteiger | 50–59 min |
-| König | volle 60 min |
-| Wütend | Session nach mindestens 5 min abbrechen |
-| Erschöpft | an einem Tag 4 h Fokus erreichen (zusätzlich) |
+| Tomate | Session ab | Punkte |
+|---|---|---|
+| Zen | 5 min | 5 |
+| Fröhlich | 10 min | 10 |
+| Verliebt | 15 min | 20 |
+| Fokus | 25 min | 35 |
+| Cool | 30 min | 50 |
+| Ninja | 40 min | 75 |
+| Aufsteiger | 50 min | 100 |
+| König | 60 min | 150 |
 
-Maßgeblich ist die eingestellte Dauer einer **fertig gelaufenen** Session.
+Maßgeblich ist die eingestellte Dauer einer **fertig gelaufenen** Session. Du bekommst
+die wertvollste Tomate, deren Mindestdauer du erreichst. Abgebrochene Sessions werden
+protokolliert, bringen aber nichts.
 
 ## Daten
 
 - Sessions: `~/Library/Application Support/PomodoroTimer/sessions.json`
-  (Start, Ende, Dauer, Fokuszeit, App-Wechsel, Tomaten, Aufgabe)
+  (Start, Ende, Dauer, Fokuszeit, App-Wechsel, Tomate, geplante und erledigte Aufgaben)
 - Aufgaben, Timer-Stand und Fensterposition: in den UserDefaults der App
 
 ## App-Wechsel und Ausblick

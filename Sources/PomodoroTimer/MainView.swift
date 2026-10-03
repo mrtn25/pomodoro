@@ -40,7 +40,7 @@ struct MainView: View {
             Image(nsImage: TomatoArt.image("zen"))
                 .resizable()
                 .frame(width: 18, height: 18)
-            Text("\(sessions.tomatoes(on: Date())) heute")
+            Text("\(sessions.points(on: Date())) Pkt heute")
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
             Spacer()
@@ -137,28 +137,29 @@ struct TimerPage: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            if let session = model.lastSession, !model.hasSession {
-                RewardView(session: session)
-                    .frame(maxHeight: .infinity)
+            if model.reviewPending {
+                ReviewView()
+            } else if model.mode == .rest {
+                breakView
+            } else if model.breakFinished {
+                nextSessionView
             } else {
-                Text(model.clock)
-                    .font(.system(size: 160, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.1)
-                    .lineLimit(1)
-                    .foregroundStyle(model.isRunning ? Theme.red : Theme.ink)
-                    .frame(maxWidth: .infinity, minHeight: 48, maxHeight: .infinity)
-                    .layoutPriority(1)
-                ProgressLine(value: model.progress)
+                focusView
             }
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 12)
+    }
+
+    private var focusView: some View {
+        VStack(spacing: 14) {
+            BigClock(color: model.isRunning ? Theme.red : Theme.ink)
+            ProgressLine(value: model.progress, color: Theme.red)
 
             if !model.hasSession {
                 DurationSlider()
             } else if !model.isRunning {
-                Button("Session beenden") { model.reset() }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .foregroundStyle(Theme.muted)
+                TextButton("Session beenden") { model.reset() }
             }
 
             if let next = tasks.next {
@@ -172,19 +173,72 @@ struct TimerPage: View {
                 }
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+    }
+
+    /// The automatic break after a completed session: reward on top, green countdown below.
+    private var breakView: some View {
+        VStack(spacing: 12) {
+            if let session = model.lastSession {
+                RewardView(session: session)
+                    .frame(maxHeight: .infinity)
+            }
+            VStack(spacing: 6) {
+                Text("Pause · \(model.clock)")
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.green)
+                ProgressLine(value: model.progress, color: Theme.green)
+            }
+            TextButton("Pause überspringen") { model.startNextSession() }
+        }
+    }
+
+    private var nextSessionView: some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 0)
+            Text("Pause vorbei")
+                .font(.headline)
+            Button { model.startNextSession() } label: {
+                Text("Nächste Session starten")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 10)
+                    .background(Capsule().fill(Theme.red))
+            }
+            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+            DurationSlider()
+        }
+    }
+}
+
+@MainActor
+struct BigClock: View {
+    @ObservedObject private var model = PomodoroModel.shared
+    let color: Color
+
+    var body: some View {
+        Text(model.clock)
+            .font(.system(size: 160, weight: .semibold, design: .rounded))
+            .monospacedDigit()
+            .minimumScaleFactor(0.1)
+            .lineLimit(1)
+            .foregroundStyle(color)
+            .frame(maxWidth: .infinity, minHeight: 48, maxHeight: .infinity)
+            .layoutPriority(1)
     }
 }
 
 struct ProgressLine: View {
     let value: Double
+    let color: Color
 
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
                 Capsule().fill(Theme.hairline)
-                Capsule().fill(Theme.red).frame(width: geo.size.width * value)
+                Capsule().fill(color).frame(width: geo.size.width * value)
             }
         }
         .frame(height: 4)
@@ -206,11 +260,19 @@ struct DurationSlider: View {
                 step: 1
             )
             .tint(Theme.red)
-            Text("\(model.minutes) min")
+            Text(sliderCaption)
                 .font(.caption)
                 .monospacedDigit()
                 .foregroundStyle(Theme.muted)
         }
+    }
+
+    /// "25 min → Fokus" — which tomato this length would earn.
+    private var sliderCaption: String {
+        guard let tomato = TomatoRules.tomato(forMinutes: model.minutes) else {
+            return "\(model.minutes) min · noch keine Tomate"
+        }
+        return "\(model.minutes) min → \(tomato.name), \(tomato.points) Pkt"
     }
 }
 
@@ -220,31 +282,99 @@ struct RewardView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if session.tomatoes.isEmpty {
-                Text("Session beendet")
+            if let tomato = session.tomato {
+                Image(nsImage: tomato.image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxHeight: 110)
+                Text("\(tomato.name) gesammelt!")
                     .font(.headline)
+                Text("+\(tomato.points) Pkt")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Theme.red)
             } else {
-                HStack(spacing: 4) {
-                    ForEach(Array(session.tomatoes.enumerated()), id: \.offset) { _, kind in
-                        Image(nsImage: kind.image)
-                            .resizable()
-                            .scaledToFit()
-                    }
-                }
-                .frame(maxHeight: 120)
-                Text(title)
+                Text(session.completed ? "Session geschafft" : "Session beendet")
                     .font(.headline)
-                    .multilineTextAlignment(.center)
+            }
+            if session.bonusPoints > 0 {
+                Text("+\(session.bonusPoints) Bonus für \(session.tasksDone ?? 0) erledigte Aufgaben")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.green)
             }
             Text("\(formatFocus(session.focusedSeconds)) Fokus · \(session.appSwitches) App-Wechsel")
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
         }
     }
+}
 
-    private var title: String {
-        let names = session.tomatoes.map(\.name).joined(separator: " + ")
-        return session.completed ? "\(names) gesammelt!" : "Abgebrochen – \(names)"
+/// After a completed session with planned tasks: which of them are really done?
+/// Only these count, once, and at most `TomatoRules.maxBonusTasks` of them.
+@MainActor
+struct ReviewView: View {
+    @ObservedObject private var model = PomodoroModel.shared
+    @State private var done: Set<UUID> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Session geschafft!")
+                .font(.headline)
+            Text("Was hast du davon erledigt?")
+                .font(.callout)
+                .foregroundStyle(Theme.muted)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(model.reviewTasks) { task in
+                        Button { toggle(task.id) } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: done.contains(task.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 16))
+                                    .foregroundStyle(done.contains(task.id) ? Theme.green : Theme.muted)
+                                Text(task.title)
+                                    .lineLimit(2)
+                                Spacer()
+                            }
+                            .padding(.vertical, 5)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Text("+\(TomatoRules.pointsPerTask) Pkt je Aufgabe, höchstens \(TomatoRules.maxBonusTasks) pro Session")
+                .font(.caption2)
+                .foregroundStyle(Theme.muted)
+
+            HStack {
+                TextButton("Nichts davon") { model.review(done: []) }
+                Spacer()
+                Button { model.review(done: done) } label: {
+                    Text("Bestätigen")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .background(Capsule().fill(Theme.green))
+                }
+                .buttonStyle(.plain)
+                .disabled(done.isEmpty)
+                .opacity(done.isEmpty ? 0.4 : 1)
+            }
+
+            if model.mode == .rest {
+                Text("Pause läuft · \(model.clock)")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.green)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    private func toggle(_ id: UUID) {
+        if done.contains(id) { done.remove(id) } else { done.insert(id) }
     }
 }
 
@@ -289,10 +419,7 @@ struct TasksPage: View {
             }
 
             if tasks.hasDone {
-                Button("Erledigte entfernen") { tasks.clearDone() }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .foregroundStyle(Theme.muted)
+                TextButton("Erledigte entfernen") { tasks.clearDone() }
             }
         }
         .padding(.horizontal, 18)
@@ -353,12 +480,12 @@ struct CollectionPage: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Sammlung").font(.headline)
                 Spacer()
-                Text("\(sessions.totalTomatoes) Tomaten · \(formatFocus(sessions.totalFocusSeconds))")
+                Text("\(sessions.totalPoints) Pkt · \(sessions.totalTomatoes) Tomaten")
                     .font(.caption)
                     .foregroundStyle(Theme.muted)
             }
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 12) {
+                LazyVGrid(columns: columns, spacing: 14) {
                     ForEach(TomatoKind.allCases) { kind in
                         TomatoCell(kind: kind, count: sessions.count(of: kind))
                     }
@@ -376,7 +503,7 @@ struct TomatoCell: View {
     let count: Int
 
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 2) {
             ZStack(alignment: .topTrailing) {
                 Image(nsImage: kind.image)
                     .resizable()
@@ -392,16 +519,37 @@ struct TomatoCell: View {
                         .background(Capsule().fill(Theme.green))
                 }
             }
-            Text(count > 0 ? kind.name : "?")
-                .font(.system(size: 10))
+            Text(kind.name)
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(count > 0 ? Theme.ink : Theme.muted)
                 .lineLimit(1)
+            Text("\(kind.minutes) min · \(kind.points) Pkt")
+                .font(.system(size: 9))
+                .foregroundStyle(Theme.muted)
+                .lineLimit(1)
         }
-        .help(count > 0 ? "\(kind.name): \(kind.hint)" : kind.hint)
+        .help("Eine Session von mindestens \(kind.minutes) min fokussiert beenden")
     }
 }
 
 // MARK: - Shared bits
+
+struct TextButton: View {
+    let title: String
+    let action: () -> Void
+
+    init(_ title: String, action: @escaping () -> Void) {
+        self.title = title
+        self.action = action
+    }
+
+    var body: some View {
+        Button(title, action: action)
+            .buttonStyle(.plain)
+            .font(.caption)
+            .foregroundStyle(Theme.muted)
+    }
+}
 
 struct IconButton: View {
     let systemImage: String
@@ -435,7 +583,7 @@ struct CollapsedBar: View {
             Text(model.clock)
                 .font(.system(size: 20, weight: .semibold, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(model.isRunning ? Theme.red : Theme.ink)
+                .foregroundStyle(model.mode == .rest ? Theme.green : (model.isRunning ? Theme.red : Theme.ink))
             Spacer()
             Button { model.toggle() } label: {
                 Image(systemName: model.isRunning ? "pause.fill" : "play.fill")

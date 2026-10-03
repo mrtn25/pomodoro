@@ -12,9 +12,53 @@ struct FocusSession: Codable, Identifiable {
     let completed: Bool
     /// How often another app came to the front while the timer ran.
     let appSwitches: Int
-    let tomatoes: [TomatoKind]
-    /// The open task at session start, if any.
-    let task: String?
+    let tomato: TomatoKind?
+    /// Titles of the tasks that were open when the session started.
+    let tasks: [String]
+    /// How many of them were confirmed done afterwards; nil until reviewed.
+    var tasksDone: Int?
+
+    private enum CodingKeys: String, CodingKey {
+        case id, startedAt, endedAt, plannedMinutes, focusedSeconds, completed, appSwitches, tomato, tasks, tasksDone
+    }
+
+    var bonusPoints: Int { TomatoRules.bonus(tasksDone: tasksDone ?? 0) }
+    var points: Int { (tomato?.points ?? 0) + bonusPoints }
+    var needsReview: Bool { completed && !tasks.isEmpty && tasksDone == nil }
+}
+
+extension FocusSession {
+    /// Fields written by the first version of the app.
+    private enum LegacyKeys: String, CodingKey { case tomatoes, task }
+
+    /// Reads current and first-version sessions; a tomato that no longer exists becomes nil.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        endedAt = try c.decode(Date.self, forKey: .endedAt)
+        plannedMinutes = try c.decode(Int.self, forKey: .plannedMinutes)
+        focusedSeconds = try c.decode(TimeInterval.self, forKey: .focusedSeconds)
+        completed = try c.decode(Bool.self, forKey: .completed)
+        appSwitches = try c.decodeIfPresent(Int.self, forKey: .appSwitches) ?? 0
+
+        if let raw = try c.decodeIfPresent(String.self, forKey: .tomato) {
+            tomato = TomatoKind(rawValue: raw)
+        } else {
+            let old = try legacy.decodeIfPresent([String].self, forKey: .tomatoes) ?? []
+            tomato = old.compactMap { TomatoKind(rawValue: $0) }.first
+        }
+
+        if let current = try c.decodeIfPresent([String].self, forKey: .tasks) {
+            tasks = current
+        } else if let single = try legacy.decodeIfPresent(String.self, forKey: .task) {
+            tasks = [single]
+        } else {
+            tasks = []
+        }
+        tasksDone = try c.decodeIfPresent(Int.self, forKey: .tasksDone)
+    }
 }
 
 /// Every finished or aborted session, as JSON in Application Support.
@@ -38,26 +82,31 @@ final class SessionStore: ObservableObject {
 
     func add(_ session: FocusSession) {
         sessions.append(session)
-        if let data = try? JSONEncoder().encode(sessions) {
-            try? data.write(to: url, options: .atomic)
-        }
+        save()
+    }
+
+    func update(_ session: FocusSession) {
+        guard let index = sessions.firstIndex(where: { $0.id == session.id }) else { return }
+        sessions[index] = session
+        save()
     }
 
     func count(of kind: TomatoKind) -> Int {
-        sessions.reduce(0) { $0 + $1.tomatoes.filter { $0 == kind }.count }
+        sessions.filter { $0.tomato == kind }.count
     }
 
-    var totalTomatoes: Int { sessions.reduce(0) { $0 + $1.tomatoes.count } }
-    var totalFocusSeconds: TimeInterval { sessions.reduce(0) { $0 + $1.focusedSeconds } }
+    var totalPoints: Int { sessions.reduce(0) { $0 + $1.points } }
+    var totalTomatoes: Int { sessions.filter { $0.tomato != nil }.count }
 
-    func focusSeconds(on day: Date) -> TimeInterval {
+    func points(on day: Date) -> Int {
         sessions.filter { Calendar.current.isDate($0.endedAt, inSameDayAs: day) }
-            .reduce(0) { $0 + $1.focusedSeconds }
+            .reduce(0) { $0 + $1.points }
     }
 
-    func tomatoes(on day: Date) -> Int {
-        sessions.filter { Calendar.current.isDate($0.endedAt, inSameDayAs: day) }
-            .reduce(0) { $0 + $1.tomatoes.count }
+    private func save() {
+        if let data = try? JSONEncoder().encode(sessions) {
+            try? data.write(to: url, options: .atomic)
+        }
     }
 }
 
@@ -95,6 +144,13 @@ final class TaskStore: ObservableObject {
     func toggle(_ id: UUID) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[index].done.toggle()
+        save()
+    }
+
+    func markDone(_ ids: Set<UUID>) {
+        for index in tasks.indices where ids.contains(tasks[index].id) {
+            tasks[index].done = true
+        }
         save()
     }
 
