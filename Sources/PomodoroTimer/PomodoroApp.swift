@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// Menu-bar Pomodoro timer: the countdown lives in the menu bar, the dropdown
-/// holds the controls, and an optional floating panel stays above all apps.
+/// Menu-bar Pomodoro timer: a tomato (plus the countdown) in the menu bar, the app
+/// in its dropdown, and an optional floating window that stays above all apps.
 @main
 @MainActor
 struct PomodoroApp: App {
@@ -15,12 +15,14 @@ struct PomodoroApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            ControlsView()
+            MainView(placement: .menu)
         } label: {
-            if model.isTouched {
-                Text(model.clock).monospacedDigit()
-            } else {
-                Image(systemName: "timer")
+            // Tomato always, the countdown next to it while a session is on.
+            HStack(spacing: 4) {
+                Image(nsImage: TomatoArt.menuBarIcon)
+                if model.hasSession {
+                    Text(model.clock).monospacedDigit()
+                }
             }
         }
         .menuBarExtraStyle(.window)

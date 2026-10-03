@@ -1,8 +1,12 @@
 import AppKit
 import Combine
 
-/// Countdown state. Like the web timer, running time hangs on an absolute end date,
+/// Countdown and session lifecycle. Running time hangs on an absolute end date,
 /// so the countdown stays correct through sleep, app-nap and relaunch.
+///
+/// A session starts with the first Start from a full timer and ends either when
+/// the countdown hits zero (completed) or on reset (aborted). Each one is logged
+/// in `SessionStore` together with the tomatoes it earned.
 @MainActor
 final class PomodoroModel: ObservableObject {
     static let shared = PomodoroModel()
@@ -13,15 +17,22 @@ final class PomodoroModel: ObservableObject {
     @Published private(set) var duration: TimeInterval
     @Published private(set) var endsAt: Date?
     @Published private(set) var pausedRemaining: TimeInterval
+    @Published private(set) var sessionStartedAt: Date?
+    /// The session that just ended — shown as reward until the next start.
+    @Published private(set) var lastSession: FocusSession?
     @Published private(set) var now = Date()
 
+    private var sessionTask: String?
     private var ticker: Timer?
+    private let switches = AppSwitchCounter()
     private let defaults = UserDefaults.standard
 
     private enum Key {
         static let duration = "pomodoro.duration"
         static let endsAt = "pomodoro.endsAt"
         static let pausedRemaining = "pomodoro.pausedRemaining"
+        static let sessionStartedAt = "pomodoro.sessionStartedAt"
+        static let sessionTask = "pomodoro.sessionTask"
     }
 
     private init() {
@@ -32,20 +43,25 @@ final class PomodoroModel: ObservableObject {
         duration = initialDuration
         pausedRemaining = stored.object(forKey: Key.pausedRemaining) as? Double ?? initialDuration
         endsAt = stored.object(forKey: Key.endsAt) as? Date
+        sessionStartedAt = stored.object(forKey: Key.sessionStartedAt) as? Date
+        sessionTask = stored.string(forKey: Key.sessionTask)
 
         if let end = endsAt {
             if end <= Date() {
-                // Ran out while the app was closed: show 0:00, no late alarm.
-                endsAt = nil
-                pausedRemaining = 0
-                save()
+                // Ran out while the app was closed: log it, but no late alarm.
+                complete(silently: true)
             } else {
+                switches.start()
                 startTicker()
             }
         }
     }
 
+    // MARK: State
+
     var isRunning: Bool { endsAt != nil }
+    var hasSession: Bool { sessionStartedAt != nil }
+    var minutes: Int { Int(duration / 60) }
 
     var remaining: TimeInterval {
         guard let endsAt else { return pausedRemaining }
@@ -54,33 +70,39 @@ final class PomodoroModel: ObservableObject {
 
     var progress: Double { duration > 0 ? min(1, 1 - remaining / duration) : 0 }
 
-    /// True once the timer has been started at least once since the last reset.
-    var isTouched: Bool { isRunning || remaining < duration }
-
     var clock: String {
         let total = Int(remaining.rounded(.up))
         return String(format: "%d:%02d", total / 60, total % 60)
     }
 
-    var minutes: Int { Int(duration / 60) }
+    // MARK: Actions
 
-    /// Sets a new length and resets to it. Ignored while running.
+    /// Sets a new length. Only between sessions — the slider is hidden during one.
     func setMinutes(_ minutes: Int) {
-        guard !isRunning else { return }
+        guard !hasSession else { return }
         let clamped = min(max(Double(minutes), Self.minuteRange.lowerBound), Self.minuteRange.upperBound)
         duration = clamped * 60
-        reset()
+        pausedRemaining = duration
+        save()
     }
 
     func toggle() { isRunning ? pause() : start() }
 
     func start() {
         guard !isRunning else { return }
-        let left = pausedRemaining > 0 ? pausedRemaining : duration
         now = Date()
-        endsAt = now.addingTimeInterval(left)
+        if sessionStartedAt == nil {
+            pausedRemaining = duration
+            sessionStartedAt = now
+            sessionTask = TaskStore.shared.next?.title
+            switches.reset()
+            lastSession = nil
+        }
+        endsAt = now.addingTimeInterval(pausedRemaining)
+        switches.start()
         startTicker()
         save()
+        Sound.start()
     }
 
     func pause() {
@@ -88,29 +110,74 @@ final class PomodoroModel: ObservableObject {
         now = Date()
         pausedRemaining = remaining
         endsAt = nil
+        switches.stop()
         stopTicker()
         save()
     }
 
+    /// Ends the session early. Anything from one minute of focus on is logged.
     func reset() {
+        now = Date()
+        if hasSession {
+            let focused = duration - remaining
+            if focused >= 60 {
+                lastSession = record(completed: false, focused: focused)
+            } else {
+                endSession()
+            }
+        }
         endsAt = nil
         pausedRemaining = duration
         stopTicker()
         save()
     }
 
+    // MARK: Internals
+
     private func tick() {
         now = Date()
-        if let endsAt, now >= endsAt { finish() }
+        if let endsAt, now >= endsAt { complete(silently: false) }
     }
 
-    private func finish() {
+    private func complete(silently: Bool) {
+        lastSession = record(completed: true, focused: duration)
         endsAt = nil
-        pausedRemaining = 0
+        pausedRemaining = duration
         stopTicker()
         save()
-        NSSound(named: "Glass")?.play()
-        NSApp.requestUserAttention(.informationalRequest)
+        if !silently {
+            Sound.end()
+            NSApp.requestUserAttention(.informationalRequest)
+        }
+    }
+
+    private func record(completed: Bool, focused: TimeInterval) -> FocusSession? {
+        guard let started = sessionStartedAt else { return nil }
+        let store = SessionStore.shared
+        let session = FocusSession(
+            startedAt: started,
+            endedAt: Date(),
+            plannedMinutes: minutes,
+            focusedSeconds: focused,
+            completed: completed,
+            appSwitches: switches.count,
+            tomatoes: TomatoRules.awards(
+                completed: completed,
+                plannedMinutes: minutes,
+                focusedSeconds: focused,
+                focusTodayBefore: store.focusSeconds(on: Date())
+            ),
+            task: sessionTask
+        )
+        store.add(session)
+        endSession()
+        return session
+    }
+
+    private func endSession() {
+        switches.stop()
+        sessionStartedAt = nil
+        sessionTask = nil
     }
 
     private func startTicker() {
@@ -132,5 +199,12 @@ final class PomodoroModel: ObservableObject {
         defaults.set(duration, forKey: Key.duration)
         defaults.set(pausedRemaining, forKey: Key.pausedRemaining)
         defaults.set(endsAt, forKey: Key.endsAt)
+        defaults.set(sessionStartedAt, forKey: Key.sessionStartedAt)
+        defaults.set(sessionTask, forKey: Key.sessionTask)
     }
+}
+
+enum Sound {
+    static func start() { NSSound(named: "Pop")?.play() }
+    static func end() { NSSound(named: "Glass")?.play() }
 }

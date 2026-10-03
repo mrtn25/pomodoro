@@ -14,10 +14,10 @@ final class FloatingPanelController: NSObject, ObservableObject, NSWindowDelegat
     private var panel: NSPanel?
     private let defaults = UserDefaults.standard
 
-    private static let collapsedSize = NSSize(width: 190, height: 44)
-    private static let collapsedMin = NSSize(width: 150, height: 36)
-    private static let expandedDefault = NSSize(width: 240, height: 250)
-    private static let expandedMin = NSSize(width: 200, height: 210)
+    private static let collapsedSize = NSSize(width: 210, height: 44)
+    private static let collapsedMin = NSSize(width: 170, height: 40)
+    private static let expandedDefault = NSSize(width: 300, height: 400)
+    private static let expandedMin = NSSize(width: 260, height: 340)
 
     private enum Key {
         static let collapsed = "panel.collapsed"
@@ -64,7 +64,8 @@ final class FloatingPanelController: NSObject, ObservableObject, NSWindowDelegat
     private var expandedSize: NSSize {
         let w = defaults.double(forKey: Key.expandedWidth)
         let h = defaults.double(forKey: Key.expandedHeight)
-        return w > 0 && h > 0 ? NSSize(width: w, height: h) : Self.expandedDefault
+        guard w > 0, h > 0 else { return Self.expandedDefault }
+        return NSSize(width: max(w, Self.expandedMin.width), height: max(h, Self.expandedMin.height))
     }
 
     private func rememberExpandedSize(_ size: NSSize) {
@@ -85,11 +86,19 @@ final class FloatingPanelController: NSObject, ObservableObject, NSWindowDelegat
     private func makePanel() -> NSPanel {
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: Self.expandedDefault),
-            styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
         panel.title = "Pomodoro"
+        // Clean white window: no visible title bar, no traffic lights. Closing lives in the ••• menu.
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            panel.standardWindowButton(button)?.isHidden = true
+        }
+        panel.backgroundColor = .white
+        panel.appearance = NSAppearance(named: .aqua)
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false
@@ -97,7 +106,7 @@ final class FloatingPanelController: NSObject, ObservableObject, NSWindowDelegat
         panel.isMovableByWindowBackground = true
         panel.delegate = self
 
-        let hosting = NSHostingView(rootView: PanelView())
+        let hosting = NSHostingView(rootView: PanelRoot())
         // The user sizes the window, not the SwiftUI content.
         hosting.sizingOptions = []
         panel.contentView = hosting
@@ -111,5 +120,18 @@ final class FloatingPanelController: NSObject, ObservableObject, NSWindowDelegat
         panel.setFrameAutosaveName("PomodoroPanel")
         applySize(to: panel)
         return panel
+    }
+}
+
+@MainActor
+private struct PanelRoot: View {
+    @ObservedObject private var panel = FloatingPanelController.shared
+
+    var body: some View {
+        if panel.isCollapsed {
+            CollapsedBar()
+        } else {
+            MainView(placement: .panel)
+        }
     }
 }
