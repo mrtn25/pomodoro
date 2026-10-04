@@ -41,6 +41,13 @@ reicht `swift run`.
 - **Beim Login starten:** Systemeinstellungen → Allgemein → Anmeldeobjekte →
   `PomodoroTimer.app` hinzufügen.
 
+## Sammlung und Kalender
+
+Der 🍅-Knopf zeigt den Tag: Punkte, Fokuszeit und die heute gesammelten Tomaten. Die
+Tomaten fangen jeden Tag wieder bei null an. Daneben stehen die Gesamtwerte über alle
+Tage. Darunter liegt ein Monatskalender: Tage mit Punkten sind rot eingefärbt, je mehr
+Punkte, desto kräftiger. Ein Klick auf einen Tag zeigt dessen Werte.
+
 ## Tomaten
 
 | Tomate | Session ab | Punkte |

@@ -34,7 +34,7 @@ enum TomatoArt {
 
     /// 18 pt tomato for the menu bar.
     static let menuBarIcon: NSImage = {
-        let icon = (TomatoArt.image("zen").copy() as? NSImage) ?? NSImage()
+        let icon = (TomatoArt.image("menubar").copy() as? NSImage) ?? NSImage()
         icon.size = NSSize(width: 18, height: 18)
         return icon
     }()

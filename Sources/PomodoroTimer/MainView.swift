@@ -32,15 +32,15 @@ struct MainView: View {
         .foregroundStyle(Theme.ink)
         .tint(Theme.red)
         .environment(\.colorScheme, .light)
-        .frame(width: placement == .menu ? 300 : nil, height: placement == .menu ? 400 : nil)
+        .frame(width: placement == .menu ? 300 : nil, height: placement == .menu ? 430 : nil)
     }
 
     private var header: some View {
         HStack(spacing: 6) {
-            Image(nsImage: TomatoArt.image("zen"))
+            Image(nsImage: TomatoArt.image("menubar"))
                 .resizable()
                 .frame(width: 18, height: 18)
-            Text("\(sessions.points(on: Date())) Pkt heute")
+            Text("Heute \(sessions.points(on: Date())) Pkt · \(formatFocus(sessions.focusSeconds(on: Date())))")
                 .font(.caption)
                 .foregroundStyle(Theme.muted)
             Spacer()
@@ -470,30 +470,76 @@ struct TaskRow: View {
 
 // MARK: - Collection
 
+/// Day view: today's (or a picked day's) points, focus time and tomatoes, the all-time
+/// totals, and a month calendar to look back. Tomatoes start from zero every day.
 @MainActor
 struct CollectionPage: View {
     @ObservedObject private var sessions = SessionStore.shared
+    @State private var day = AppCalendar.shared.startOfDay(for: Date())
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Sammlung").font(.headline)
-                Spacer()
-                Text("\(sessions.totalPoints) Pkt · \(sessions.totalTomatoes) Tomaten")
-                    .font(.caption)
-                    .foregroundStyle(Theme.muted)
-            }
-            ScrollView {
-                LazyVGrid(columns: columns, spacing: 14) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    StatTile(
+                        title: isToday ? "Heute" : dayTitle,
+                        points: sessions.points(on: day),
+                        seconds: sessions.focusSeconds(on: day),
+                        color: Theme.red
+                    )
+                    StatTile(
+                        title: "Gesamt",
+                        points: sessions.totalPoints,
+                        seconds: sessions.totalFocusSeconds,
+                        color: Theme.green
+                    )
+                }
+
+                LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(TomatoKind.allCases) { kind in
-                        TomatoCell(kind: kind, count: sessions.count(of: kind))
+                        TomatoCell(kind: kind, count: sessions.count(of: kind, on: day))
                     }
                 }
+
+                MonthCalendar(selected: $day, pointsByDay: sessions.pointsByDay)
             }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
+    }
+
+    private var isToday: Bool { AppCalendar.shared.isDateInToday(day) }
+
+    private var dayTitle: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "EEE, d. MMM"
+        return formatter.string(from: day)
+    }
+}
+
+struct StatTile: View {
+    let title: String
+    let points: Int
+    let seconds: TimeInterval
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(Theme.muted)
+            Text("\(points) Pkt")
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(color)
+            Text("\(formatFocus(seconds)) Fokus")
+                .font(.caption2)
+                .foregroundStyle(Theme.muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).stroke(Theme.hairline))
     }
 }
 
@@ -529,6 +575,102 @@ struct TomatoCell: View {
                 .lineLimit(1)
         }
         .help("Eine Session von mindestens \(kind.minutes) min fokussiert beenden")
+    }
+}
+
+/// Month grid, Monday first. Days with points are tinted red by how much was
+/// earned; a click picks the day shown above. No navigating into the future.
+struct MonthCalendar: View {
+    @Binding var selected: Date
+    let pointsByDay: [Date: Int]
+    @State private var month = AppCalendar.shared.dateInterval(of: .month, for: Date())?.start ?? Date()
+
+    private let calendar = AppCalendar.shared
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 7)
+    private let weekdays = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                IconButton(systemImage: "chevron.left", help: "Vorheriger Monat") { shift(-1) }
+                Spacer()
+                Text(monthTitle)
+                    .font(.callout.weight(.semibold))
+                Spacer()
+                IconButton(systemImage: "chevron.right", help: "Nächster Monat") { shift(1) }
+                    .opacity(isCurrentMonth ? 0.3 : 1)
+                    .disabled(isCurrentMonth)
+            }
+
+            LazyVGrid(columns: columns, spacing: 2) {
+                ForEach(weekdays, id: \.self) { name in
+                    Text(name)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Theme.muted)
+                }
+                ForEach(0..<(leadingBlanks + dayCount), id: \.self) { index in
+                    if index < leadingBlanks {
+                        Color.clear.frame(height: 26)
+                    } else {
+                        dayCell(dayNumber: index - leadingBlanks + 1)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dayCell(dayNumber: Int) -> some View {
+        let date = calendar.date(byAdding: .day, value: dayNumber - 1, to: month) ?? month
+        let points = pointsByDay[date] ?? 0
+        let isSelected = calendar.isDate(date, inSameDayAs: selected)
+        let isToday = calendar.isDateInToday(date)
+        let isFuture = date > Date()
+        // 150 points (a full hour) and more is full strength.
+        let tint = points > 0 ? 0.15 + 0.6 * min(Double(points) / 150, 1) : 0
+
+        return Button { selected = date } label: {
+            Text("\(dayNumber)")
+                .font(.system(size: 11, weight: isToday ? .bold : .regular))
+                .foregroundStyle(isSelected ? Color.white : (isFuture ? Theme.hairline : Theme.ink))
+                .frame(maxWidth: .infinity, minHeight: 26)
+                .background(
+                    Circle()
+                        .fill(isSelected ? Theme.red : Theme.red.opacity(tint))
+                        .frame(width: 24, height: 24)
+                )
+                .overlay(
+                    Circle()
+                        .stroke(isToday && !isSelected ? Theme.red : Color.clear, lineWidth: 1)
+                        .frame(width: 24, height: 24)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isFuture)
+        .help(points > 0 ? "\(points) Pkt" : "")
+    }
+
+    private var dayCount: Int { calendar.range(of: .day, in: .month, for: month)?.count ?? 30 }
+
+    /// Empty cells before the 1st so it lands under its weekday.
+    private var leadingBlanks: Int {
+        let weekday = calendar.component(.weekday, from: month)
+        return (weekday - calendar.firstWeekday + 7) % 7
+    }
+
+    private var isCurrentMonth: Bool { calendar.isDate(month, equalTo: Date(), toGranularity: .month) }
+
+    private var monthTitle: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "de_DE")
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter.string(from: month)
+    }
+
+    private func shift(_ months: Int) {
+        if let next = calendar.date(byAdding: .month, value: months, to: month) {
+            month = next
+        }
     }
 }
 
@@ -577,7 +719,7 @@ struct CollapsedBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(nsImage: TomatoArt.image("zen"))
+            Image(nsImage: TomatoArt.image("menubar"))
                 .resizable()
                 .frame(width: 20, height: 20)
             Text(model.clock)

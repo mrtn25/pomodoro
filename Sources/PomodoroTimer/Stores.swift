@@ -91,16 +91,32 @@ final class SessionStore: ObservableObject {
         save()
     }
 
-    func count(of kind: TomatoKind) -> Int {
-        sessions.filter { $0.tomato == kind }.count
-    }
+    // MARK: Totals (all time)
 
     var totalPoints: Int { sessions.reduce(0) { $0 + $1.points } }
-    var totalTomatoes: Int { sessions.filter { $0.tomato != nil }.count }
+    var totalFocusSeconds: TimeInterval { sessions.reduce(0) { $0 + $1.focusedSeconds } }
 
-    func points(on day: Date) -> Int {
-        sessions.filter { Calendar.current.isDate($0.endedAt, inSameDayAs: day) }
-            .reduce(0) { $0 + $1.points }
+    // MARK: Per day — the collection starts empty every morning
+
+    func daySessions(_ day: Date) -> [FocusSession] {
+        sessions.filter { AppCalendar.shared.isDate($0.endedAt, inSameDayAs: day) }
+    }
+
+    func points(on day: Date) -> Int { daySessions(day).reduce(0) { $0 + $1.points } }
+
+    func focusSeconds(on day: Date) -> TimeInterval {
+        daySessions(day).reduce(0) { $0 + $1.focusedSeconds }
+    }
+
+    func count(of kind: TomatoKind, on day: Date) -> Int {
+        daySessions(day).filter { $0.tomato == kind }.count
+    }
+
+    /// Points per calendar day, keyed by start of day — drives the calendar shading.
+    var pointsByDay: [Date: Int] {
+        sessions.reduce(into: [:]) { result, session in
+            result[AppCalendar.shared.startOfDay(for: session.endedAt), default: 0] += session.points
+        }
     }
 
     private func save() {
@@ -108,6 +124,16 @@ final class SessionStore: ObservableObject {
             try? data.write(to: url, options: .atomic)
         }
     }
+}
+
+/// One calendar for every day boundary: German, weeks start on Monday.
+enum AppCalendar {
+    static let shared: Calendar = {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "de_DE")
+        calendar.firstWeekday = 2
+        return calendar
+    }()
 }
 
 // MARK: - Tasks
